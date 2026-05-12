@@ -115,6 +115,10 @@ The schedule is **already in the repo** (`daily-ingestion.yml`, `0 14 * * *` UTC
 
 Until secrets are set, the workflow fails fast on the first step with an error pointing at `DATABASE_URL`.
 
+The **Run lead monitor** step sets **`APP_ENV=production`** so ingestion validates **`OPENAI_API_KEY`** and **`KEYWORDS`** before work starts. Optional **`STRICT_STARTUP_VALIDATION=true`** (in `.env` or GitHub secrets) tightens API boot and ingestion (e.g. Reddit / Google URLs in strict mode).
+
+**Health:** **`GET /health`** liveness; **`GET /ready`** checks PostgreSQL (`SELECT 1`). Docker image runs as **non-root** (`appuser`) and includes a **HEALTHCHECK** on `/health`.
+
 ## Deploy (Vercel + cron)
 
 1. Create a Vercel project from this repo. The FastAPI entrypoint is set in `pyproject.toml` as `app.main:app`.

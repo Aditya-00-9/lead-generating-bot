@@ -12,6 +12,10 @@ concurrency:
   group: daily-lead-ingestion
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   migrate-and-ingest:
     runs-on: ubuntu-latest
@@ -21,6 +25,8 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          set -euo pipefail
+          echo "GITHUB_SHA=${GITHUB_SHA:-unknown}"
           if [ -z "$DATABASE_URL" ]; then
             echo "::error::Set the repository secret DATABASE_URL to your hosted Postgres URL (Neon/Supabase/RDS). See README → CI/CD."
             exit 1
@@ -29,16 +35,20 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          set -euo pipefail
+          pip install -r requirements.txt
       - name: Run database migrations
         env:
           SYNC_DATABASE_URL: ${{ secrets.SYNC_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          set -euo pipefail
           export SYNC_DATABASE_URL="$(python scripts/alembic_database_url.py)"
           alembic upgrade head
       - name: Run lead monitor
         env:
+          APP_ENV: production
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -51,5 +61,6 @@ jobs:
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: kramaai-lead-monitor/1.0
         run: |
+          set -euo pipefail
           export SYNC_DATABASE_URL="${SYNC_DATABASE_URL:-$DATABASE_URL}"
           python -m app.scheduler.runner

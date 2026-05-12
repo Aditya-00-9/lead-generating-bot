@@ -79,9 +79,17 @@ class LeadPipelineService:
         await report_repo.insert_from_leads(created, report_date)
 
         if self.settings.slack_webhook_url:
-            await send_slack_digest(self.settings.slack_webhook_url, self.settings.slack_channel, created, report_path=report_path)
-            logger.info("slack.digest.sent", count=len(created))
+            try:
+                await send_slack_digest(
+                    self.settings.slack_webhook_url, self.settings.slack_channel, created, report_path=report_path
+                )
+                logger.info("slack.digest.sent", count=len(created))
+            except Exception as exc:  # noqa: BLE001 — never fail ingestion after DB commits
+                logger.exception("slack.digest.failed", error=str(exc))
         if self.settings.slack_bot_token and self.settings.slack_channel_id and report_path.exists():
-            await upload_report_to_slack(self.settings.slack_bot_token, self.settings.slack_channel_id, report_path)
-            logger.info("slack.report.uploaded", report_path=str(report_path))
+            try:
+                await upload_report_to_slack(self.settings.slack_bot_token, self.settings.slack_channel_id, report_path)
+                logger.info("slack.report.uploaded", report_path=str(report_path))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("slack.report.upload.failed", error=str(exc))
         return created

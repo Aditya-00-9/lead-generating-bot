@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     sentry_dsn: str = ""
     cron_secret: str = ""
+    strict_startup_validation: bool = False
 
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/kramaai_leads"
     sync_database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/kramaai_leads"

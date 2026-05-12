@@ -5,6 +5,9 @@ on:
     - cron: "0 14 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: daily-lead-ingestion
   cancel-in-progress: false
@@ -14,6 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check Actions secrets (hosted Postgres required)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Set the repository secret DATABASE_URL to your hosted Postgres URL (Neon/Supabase/RDS). See README → CI/CD."
+            exit 1
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

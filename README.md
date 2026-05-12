@@ -104,6 +104,17 @@ Required repository secrets for the daily job:
 
 - `OPENAI_API_KEY`, `OPENAI_MODEL`, `SLACK_WEBHOOK_URL`, `DATABASE_URL`, `KEYWORDS`, `GOOGLE_ALERT_RSS_URLS`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`
 
+### Turn on the GitHub cron (one-time)
+
+The schedule is **already in the repo** (`daily-ingestion.yml`, `0 14 * * *` UTC). GitHub runs it only after this is done:
+
+1. **Enable Actions:** Repo → **Settings** → **Actions** → **General** → under *Actions permissions*, allow actions (default for public repos is fine).
+2. **Add secrets:** **Settings** → **Secrets and variables** → **Actions** → **New repository secret** for each name in the list above. `DATABASE_URL` must be a **publicly reachable Postgres** URL (not `localhost` on your PC).
+3. **Confirm the workflow exists:** **Actions** → left sidebar **Daily lead ingestion** (if the tab is empty, push any commit to `main` or wait a minute after enabling Actions).
+4. **Test without waiting for 14:00 UTC:** open **Daily lead ingestion** → **Run workflow** → branch `main` → **Run workflow**.
+
+Until secrets are set, the workflow fails fast on the first step with an error pointing at `DATABASE_URL`.
+
 ## Deploy (Vercel + cron)
 
 1. Create a Vercel project from this repo. The FastAPI entrypoint is set in `pyproject.toml` as `app.main:app`.

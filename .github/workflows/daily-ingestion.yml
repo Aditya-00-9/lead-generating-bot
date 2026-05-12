@@ -1,0 +1,44 @@
+name: Daily lead ingestion
+
+on:
+  schedule:
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily-lead-ingestion
+  cancel-in-progress: false
+
+jobs:
+  migrate-and-ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run database migrations
+        env:
+          SYNC_DATABASE_URL: ${{ secrets.SYNC_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          export SYNC_DATABASE_URL="$(python scripts/alembic_database_url.py)"
+          alembic upgrade head
+      - name: Run lead monitor
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SYNC_DATABASE_URL: ${{ secrets.SYNC_DATABASE_URL }}
+          KEYWORDS: ${{ secrets.KEYWORDS }}
+          GOOGLE_ALERT_RSS_URLS: ${{ secrets.GOOGLE_ALERT_RSS_URLS }}
+          MAX_ITEMS_PER_QUERY: "10"
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USER_AGENT: kramaai-lead-monitor/1.0
+        run: |
+          export SYNC_DATABASE_URL="${SYNC_DATABASE_URL:-$DATABASE_URL}"
+          python -m app.scheduler.runner

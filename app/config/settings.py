@@ -2,8 +2,10 @@ import os
 from functools import lru_cache
 from typing import List
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.utils.postgres_url import normalize_postgres_url
 
 
 def _default_report_output_dir() -> str:
@@ -73,6 +75,12 @@ class Settings(BaseSettings):
     @property
     def google_alert_url_list(self) -> List[str]:
         return [u.strip() for u in self.google_alert_rss_urls.split(",") if u.strip()]
+
+    @model_validator(mode="after")
+    def normalize_postgres_connection_urls(self) -> "Settings":
+        object.__setattr__(self, "database_url", normalize_postgres_url(self.database_url))
+        object.__setattr__(self, "sync_database_url", normalize_postgres_url(self.sync_database_url))
+        return self
 
 
 @lru_cache(maxsize=1)

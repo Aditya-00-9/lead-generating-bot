@@ -130,6 +130,7 @@ The **Run lead monitor** step sets **`APP_ENV=production`** so ingestion validat
 
 - `ModuleNotFoundError`: ensure virtual environment is active.
 - DB connection errors: verify `DATABASE_URL` and Postgres availability.
+- **`Name or service not known` with `neon. tech` in the error:** your connection string has a **space** in the hostname (`neon. tech` instead of `neon.tech`). Fix the **GitHub secret** (and local `.env`) by re-copying from Neon with no spaces. The app also **auto-corrects** that typo when normalizing URLs, but fixing the secret is still best.
 - Empty digests: verify `KEYWORDS`, Reddit credentials, and Google Alert feed URLs.
 - OpenAI validation failures: inspect logs for malformed model output and retry behavior.
 

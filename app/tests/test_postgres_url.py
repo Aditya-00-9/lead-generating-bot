@@ -6,6 +6,13 @@ def test_normalize_bare_postgresql_to_psycopg3() -> None:
     assert u.startswith("postgresql+psycopg://")
 
 
+def test_normalize_fixes_neon_host_typo_space_before_tech() -> None:
+    broken = "postgresql://u:p@ep-x-pooler.c-8.us-east-1.aws.neon. tech/db?sslmode=require"
+    fixed = normalize_postgres_url(broken)
+    assert "neon. tech" not in fixed
+    assert "neon.tech" in fixed
+
+
 def test_normalize_strips_channel_binding() -> None:
     u = normalize_postgres_url(
         "postgresql://u:p@host/db?sslmode=require&channel_binding=require"

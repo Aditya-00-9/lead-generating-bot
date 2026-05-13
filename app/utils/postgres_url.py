@@ -1,5 +1,6 @@
 """Normalize Postgres URLs so SQLAlchemy uses psycopg v3, not the default psycopg2 dialect."""
 
+import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
@@ -15,6 +16,8 @@ def normalize_postgres_url(url: str) -> str:
     url = (url or "").strip()
     if not url:
         return url
+    # Copy/paste typo: "neon. tech" instead of "neon.tech" breaks DNS (GitHub Actions log).
+    url = re.sub(r"(?i)neon\.\s+tech", "neon.tech", url)
     if "+asyncpg://" in url:
         url = url.replace("+asyncpg://", "+psycopg://", 1)
     if "+psycopg_async://" in url:

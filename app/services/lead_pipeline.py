@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.classifiers.openai_enricher import OpenAIEnricher
 from app.collectors.google_alerts import GoogleAlertsCollector
+from app.collectors.openai_url_scrape import OpenAIUrlScrapeCollector
+from app.collectors.openai_web_research import OpenAIWebResearchCollector
 from app.collectors.placeholders import PlaceholderCollector
 from app.collectors.reddit import RedditCollector
 from app.config.settings import Settings
@@ -32,7 +34,12 @@ class LeadPipelineService:
         self.enricher = OpenAIEnricher(settings)
         self.ranker = LeadRanker()
 
-        self.collectors = [RedditCollector(settings), GoogleAlertsCollector(settings)]
+        self.collectors: list = []
+        if settings.enable_openai_web_research:
+            self.collectors.append(OpenAIWebResearchCollector(settings))
+        if settings.openai_scraper_url_list:
+            self.collectors.append(OpenAIUrlScrapeCollector(settings))
+        self.collectors.extend([RedditCollector(settings), GoogleAlertsCollector(settings)])
         if settings.enable_placeholder_sources:
             self.collectors.extend(
                 [

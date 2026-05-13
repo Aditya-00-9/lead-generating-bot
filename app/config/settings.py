@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_timeout_seconds: int = 25
+    # OpenAI-driven collection (web search + optional URL scrape)
+    enable_openai_web_research: bool = False
+    openai_responses_model: str = ""
+    openai_web_research_max_tool_calls: int = 5
+    openai_collection_timeout_seconds: int = 120
+    openai_scraper_urls: str = ""
+    openai_collection_model: str = ""
+    openai_collection_min_relevance: float = 35.0
 
     slack_webhook_url: str = ""
     slack_channel: str = "#kramaai-market-listening"
@@ -76,6 +84,10 @@ class Settings(BaseSettings):
     @property
     def google_alert_url_list(self) -> List[str]:
         return [u.strip() for u in self.google_alert_rss_urls.split(",") if u.strip()]
+
+    @property
+    def openai_scraper_url_list(self) -> List[str]:
+        return [u.strip() for u in self.openai_scraper_urls.split(",") if u.strip()]
 
     @model_validator(mode="after")
     def normalize_postgres_connection_urls(self) -> "Settings":

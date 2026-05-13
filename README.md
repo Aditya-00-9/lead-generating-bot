@@ -7,10 +7,10 @@ Production-grade AI lead-intelligence pipeline for competitor dissatisfaction mo
 Daily flow:
 
 1. Scheduler (`Cron`, GitHub Actions, or APScheduler)
-2. Source collectors (`Reddit API`, `Google Alerts RSS`, plug-in placeholders for `G2`, `Capterra`, `App Store`, `Play Store`)
+2. Source collectors: optional **`OpenAI Web Research`** (web search via Responses API), optional **`OpenAI URL scrape`** (fetch listed URLs + AI extract), then **`Reddit API`**, **`Google Alerts RSS`**, placeholders (`G2`, `Capterra`, etc.)
 3. Normalization + sanitization
 4. Deduplication (URL + content hash + fuzzy match window)
-5. OpenAI enrichment (JSON-structured outputs)
+5. **OpenAI enrichment** (second pass: structured **classification**, scores, suggested reply — `OpenAIEnricher`)
 6. Lead ranking and persistence (`PostgreSQL + SQLAlchemy`)
 7. Slack digest (`Block Kit`, grouped by intent and competitor)
 8. Human review and manual posting
@@ -40,6 +40,11 @@ copy .env.example .env
 
 Update `.env` with:
 - `OPENAI_API_KEY`
+- Optional **OpenAI collection** (stronger than Reddit/RSS alone):
+  - `ENABLE_OPENAI_WEB_RESEARCH=true` — uses OpenAI **`web_search_preview`** to discover real URLs matching `KEYWORDS` (uses extra API/tool spend; set `OPENAI_RESPONSES_MODEL=gpt-4o` if your account supports it).
+  - `OPENAI_SCRAPER_URLS` — comma-separated **https** pages to fetch; OpenAI extracts lead-like snippets from the HTML text (good for competitor help centers, forum threads, static list pages).
+  - `OPENAI_COLLECTION_MODEL` — model for page extraction (defaults to `OPENAI_MODEL`).
+  - `OPENAI_COLLECTION_MIN_RELEVANCE` — minimum `relevance_score` (0–100) to keep a scraped item (default `35`).
 - `DATABASE_URL` and `SYNC_DATABASE_URL`
 - `SLACK_WEBHOOK_URL`
 - `KEYWORDS`

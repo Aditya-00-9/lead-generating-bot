@@ -17,6 +17,19 @@ class NormalizedMention(BaseModel):
     cleaned_text: str
 
 
+class ExtractedWebMention(BaseModel):
+    """Structured output from OpenAI-backed collectors (web search or page extract)."""
+
+    title: str = ""
+    source_url: str
+    excerpt: str = ""
+    relevance_score: float = Field(default=0.0, ge=0.0, le=100.0)
+
+
+class ExtractedWebMentionsBatch(BaseModel):
+    items: list[ExtractedWebMention] = Field(default_factory=list)
+
+
 class AIEnrichmentResult(BaseModel):
     competitor: str
     detected_pain_points: list[str] = Field(default_factory=list)

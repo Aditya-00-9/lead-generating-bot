@@ -8,6 +8,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.utils.postgres_url import normalize_postgres_url
 
 
+def _is_placeholder_google_feed(url: str) -> bool:
+    u = url.lower()
+    return "feeds/0000" in u or "feeds/00000000" in u or "/0000/" in u
+
+
 def _default_report_output_dir() -> str:
     return "/tmp/reports" if os.environ.get("VERCEL") else "reports"
 
@@ -27,9 +32,12 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    openai_triage_model: str = ""
     openai_timeout_seconds: int = 25
-    # OpenAI-driven collection (web search + optional URL scrape)
-    enable_openai_web_research: bool = False
+    min_enrich_score: float = 50.0
+    reply_context: str = ""
+    # OpenAI web discovery: on by default; set ENABLE_OPENAI_WEB_RESEARCH=false to disable (saves API cost).
+    enable_openai_web_research: bool = True
     openai_responses_model: str = ""
     openai_web_research_max_tool_calls: int = 5
     openai_collection_timeout_seconds: int = 120
@@ -51,9 +59,10 @@ class Settings(BaseSettings):
     keywords: str = ""
     max_items_per_query: int = 25
 
-    duplicate_similarity_threshold: int = 90
-    duplicate_window_days: int = 14
-    enable_placeholder_sources: bool = True
+    duplicate_similarity_threshold: int = 85
+    duplicate_window_days: int = 21
+    dedupe_candidate_window: int = 200
+    enable_placeholder_sources: bool = False
     report_output_dir: str = Field(default_factory=_default_report_output_dir)
     scheduler_timezone: str = "Asia/Kolkata"
     scheduler_hour: int = 19
@@ -88,6 +97,25 @@ class Settings(BaseSettings):
     @property
     def openai_scraper_url_list(self) -> List[str]:
         return [u.strip() for u in self.openai_scraper_urls.split(",") if u.strip()]
+
+    @property
+    def reddit_configured(self) -> bool:
+        return bool(self.reddit_client_id.strip() and self.reddit_client_secret.strip())
+
+    @property
+    def google_alerts_configured(self) -> bool:
+        urls = self.google_alert_url_list
+        if not urls:
+            return False
+        return any(not _is_placeholder_google_feed(u) for u in urls)
+
+    @property
+    def openai_discovery_enabled(self) -> bool:
+        return self.enable_openai_web_research and bool(self.openai_api_key.strip())
+
+    @property
+    def openai_triage_model_name(self) -> str:
+        return (self.openai_triage_model or self.openai_model).strip()
 
     @model_validator(mode="after")
     def normalize_postgres_connection_urls(self) -> "Settings":

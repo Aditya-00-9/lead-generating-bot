@@ -7,7 +7,7 @@ Production-grade AI lead-intelligence pipeline for competitor dissatisfaction mo
 Daily flow:
 
 1. Scheduler (`Cron`, GitHub Actions, or APScheduler)
-2. Source collectors: optional **`OpenAI Web Research`** (web search via Responses API), optional **`OpenAI URL scrape`** (fetch listed URLs + AI extract), then **`Reddit API`**, **`Google Alerts RSS`**, placeholders (`G2`, `Capterra`, etc.)
+2. Source collectors: **`OpenAI Web Research`** when `OPENAI_API_KEY` is set (on by default; disable with `ENABLE_OPENAI_WEB_RESEARCH=false`), optional **`OpenAI URL scrape`**, then **`Reddit`** and **`Google Alerts RSS`** only when those credentials or real feed URLs are configured; optional demo placeholders if `ENABLE_PLACEHOLDER_SOURCES=true`
 3. Normalization + sanitization
 4. Deduplication (URL + content hash + fuzzy match window)
 5. **OpenAI enrichment** (second pass: structured **classification**, scores, suggested reply — `OpenAIEnricher`)
@@ -38,18 +38,18 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-Update `.env` with:
-- `OPENAI_API_KEY`
-- Optional **OpenAI collection** (stronger than Reddit/RSS alone):
-  - `ENABLE_OPENAI_WEB_RESEARCH=true` — uses OpenAI **`web_search_preview`** to discover real URLs matching `KEYWORDS` (uses extra API/tool spend; set `OPENAI_RESPONSES_MODEL=gpt-4o` if your account supports it).
-  - `OPENAI_SCRAPER_URLS` — comma-separated **https** pages to fetch; OpenAI extracts lead-like snippets from the HTML text (good for competitor help centers, forum threads, static list pages).
-  - `OPENAI_COLLECTION_MODEL` — model for page extraction (defaults to `OPENAI_MODEL`).
-  - `OPENAI_COLLECTION_MIN_RELEVANCE` — minimum `relevance_score` (0–100) to keep a scraped item (default `35`).
-- `DATABASE_URL` and `SYNC_DATABASE_URL`
-- `SLACK_WEBHOOK_URL`
-- `KEYWORDS`
-- `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`
-- optional: `GOOGLE_ALERT_RSS_URLS`, `SENTRY_DSN`
+**Minimum to run ingestion:** `DATABASE_URL`, `OPENAI_API_KEY`, and `KEYWORDS`. With only those, the pipeline uses **OpenAI web discovery** (no Reddit or Google setup required).
+
+Also set `SLACK_WEBHOOK_URL` if you want the daily digest.
+
+Optional:
+- **`ENABLE_OPENAI_WEB_RESEARCH=false`** — turn off web search discovery (saves API cost).
+- **`OPENAI_SCRAPER_URLS`** — comma-separated **https** pages; OpenAI extracts lead-like snippets from page text.
+- **`OPENAI_RESPONSES_MODEL`**, **`OPENAI_COLLECTION_MODEL`**, **`OPENAI_COLLECTION_MIN_RELEVANCE`** — tune collection models and relevance cutoff.
+- **`REDDIT_CLIENT_ID`** / **`REDDIT_CLIENT_SECRET`** — adds Reddit collection when both are set.
+- **`GOOGLE_ALERT_RSS_URLS`** — comma-separated real Google Alert RSS feed URLs (template `feeds/0000/...` URLs are ignored).
+- **`ENABLE_PLACEHOLDER_SOURCES=true`** — demo-only placeholder sources.
+- **`SENTRY_DSN`**, **`SYNC_DATABASE_URL`** (Alembic; often same as `DATABASE_URL` with sync driver)
 
 ## Database Migrations
 
@@ -68,15 +68,19 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 Daily pipeline once:
 
 ```bash
-python -m app.scheduler.runner
+make run
+# or: python -m app.scheduler.runner
 ```
 
 This run now also:
-- creates an Excel report in `reports/lead_report_YYYY-MM-DD.xlsx`
+- creates a per-run Excel report in `reports/new_leads_YYYY-MM-DD.xlsx`
+- refreshes a master Excel report in `reports/all_leads_master.xlsx` (historical leads)
 - writes report rows to Postgres table `lead_reports` with columns:
   `Date | Source | Link | Competitor | Pain Point | Intent | Suggested Reply | Status`
+- both Excel reports include visibility columns for workflow follow-up:
+  `Run Date | Captured At | ... | Status | Reviewed By | Reviewed At | Posted At`
 - posts daily digest to Slack webhook
-- optionally uploads the Excel file to Slack when `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are set
+- optionally uploads both Excel files to Slack when `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are set
 
 APScheduler (long-running):
 
@@ -105,9 +109,9 @@ GitHub Actions:
 
 Use a **hosted Postgres** (Neon, Supabase, RDS, etc.): set `DATABASE_URL` in repository secrets to the connection string the app uses. Optional `SYNC_DATABASE_URL` if you keep a separate sync URL for Alembic; otherwise the workflow derives a sync URL from `DATABASE_URL` (including `+asyncpg` → `+psycopg` for the migrate step).
 
-Required repository secrets for the daily job:
+**Required** repository secrets for the daily job: `DATABASE_URL`, `OPENAI_API_KEY`, `KEYWORDS`, and `SLACK_WEBHOOK_URL` (if you want Slack). Set `OPENAI_MODEL` if you use a non-default model.
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL`, `SLACK_WEBHOOK_URL`, `DATABASE_URL`, `KEYWORDS`, `GOOGLE_ALERT_RSS_URLS`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`
+**Optional:** `GOOGLE_ALERT_RSS_URLS`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `SYNC_DATABASE_URL`, and others from `.env.example`. Empty optional secrets are fine; Reddit and Google collectors are skipped when not configured.
 
 ### Turn on the GitHub cron (one-time)
 
@@ -136,7 +140,7 @@ The **Run lead monitor** step sets **`APP_ENV=production`** so ingestion validat
 - `ModuleNotFoundError`: ensure virtual environment is active.
 - DB connection errors: verify `DATABASE_URL` and Postgres availability.
 - **`Name or service not known` with `neon. tech` in the error:** your connection string has a **space** in the hostname (`neon. tech` instead of `neon.tech`). Fix the **GitHub secret** (and local `.env`) by re-copying from Neon with no spaces. The app also **auto-corrects** that typo when normalizing URLs, but fixing the secret is still best.
-- Empty digests: verify `KEYWORDS`, Reddit credentials, and Google Alert feed URLs.
+- Empty digests: verify `KEYWORDS` and `OPENAI_API_KEY`; add Reddit or real Google Alert feeds only if you rely on those sources.
 - OpenAI validation failures: inspect logs for malformed model output and retry behavior.
 
 ## Scaling Recommendations

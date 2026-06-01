@@ -1,10 +1,3 @@
-SYSTEM_PROMPT = """
-You are a lead-intelligence analyst for B2B SaaS market listening.
-You MUST return strict JSON and no prose.
-Only use facts present in the input text. Do not invent details.
-If uncertain, lower confidence with conservative scores.
-"""
-
 USER_TEMPLATE = """
 Analyze this mention for competitor dissatisfaction and migration intent.
 

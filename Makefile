@@ -7,6 +7,11 @@ run-api:
 run-pipeline:
 	python -m app.scheduler.runner
 
+run: run-pipeline
+
+run-local:
+	powershell -ExecutionPolicy Bypass -File scripts/run_local.ps1
+
 migrate:
 	alembic upgrade head
 

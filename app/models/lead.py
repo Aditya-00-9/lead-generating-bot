@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, Float, Index, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, Index, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,7 @@ class Lead(Base):
         Index("ix_leads_competitor", "competitor"),
         Index("ix_leads_intent_label", "intent_label"),
         Index("ix_leads_duplicate_hash", "duplicate_hash"),
+        Index("idx_leads_rank_score", "rank_score"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -53,9 +54,14 @@ class Lead(Base):
     urgency_score: Mapped[float] = mapped_column(Float, nullable=False)
     engagement_score: Mapped[float] = mapped_column(Float, nullable=False)
     duplicate_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    rank_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    human_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     response_status: Mapped[ResponseStatus] = mapped_column(Enum(ResponseStatus), default=ResponseStatus.new)
     reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
 
 

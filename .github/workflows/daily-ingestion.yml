@@ -51,12 +51,16 @@ jobs:
           APP_ENV: production
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+          OPENAI_TRIAGE_MODEL: ${{ secrets.OPENAI_TRIAGE_MODEL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SYNC_DATABASE_URL: ${{ secrets.SYNC_DATABASE_URL }}
           KEYWORDS: ${{ secrets.KEYWORDS }}
-          GOOGLE_ALERT_RSS_URLS: ${{ secrets.GOOGLE_ALERT_RSS_URLS }}
+          MIN_ENRICH_SCORE: "50"
           MAX_ITEMS_PER_QUERY: "10"
+          GOOGLE_ALERT_RSS_URLS: ${{ secrets.GOOGLE_ALERT_RSS_URLS }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: kramaai-lead-monitor/1.0
@@ -64,3 +68,10 @@ jobs:
           set -euo pipefail
           export SYNC_DATABASE_URL="${SYNC_DATABASE_URL:-$DATABASE_URL}"
           python -m app.scheduler.runner
+      - name: Upload Excel reports as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lead-reports-${{ github.run_id }}
+          path: reports/*.xlsx
+          if-no-files-found: warn

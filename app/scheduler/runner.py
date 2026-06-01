@@ -2,6 +2,10 @@ import asyncio
 
 import structlog
 
+from app.utils.asyncio_policy import configure_windows_event_loop_policy
+
+configure_windows_event_loop_policy()
+
 from app.config.settings import get_settings
 from app.config.startup_validation import apply_ingestion_startup_validation
 from app.db.session import SessionLocal

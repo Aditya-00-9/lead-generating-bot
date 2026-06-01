@@ -21,7 +21,7 @@ class ReportRepository:
                 pain_point=pain_point,
                 intent=lead.intent_label.value,
                 suggested_reply=lead.suggested_reply,
-                status="New",
+                status=lead.response_status.value.upper(),
             )
             self.session.add(row)
             rows.append(row)

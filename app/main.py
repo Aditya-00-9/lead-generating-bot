@@ -6,6 +6,10 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy import text
 
+from app.utils.asyncio_policy import configure_windows_event_loop_policy
+
+configure_windows_event_loop_policy()
+
 from app.api.cron import router as cron_router
 from app.api.routes import router as api_router
 from app.config.settings import get_settings

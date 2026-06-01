@@ -76,7 +76,6 @@ class OpenAIWebResearchCollector(BaseCollector):
             "tool_choice": "auto",
             "max_tool_calls": self.settings.openai_web_research_max_tool_calls,
             "temperature": 0.2,
-            "text": {"format": {"type": "json_object"}},
             "truncation": "auto",
         }
         resp = await self.client.responses.create(**kwargs)

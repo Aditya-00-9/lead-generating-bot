@@ -63,8 +63,12 @@ class LeadResponse(BaseModel):
     sentiment: str
     urgency_score: float
     engagement_score: float
+    rank_score: float = 0.0
+    human_score: int | None = None
     response_status: ResponseStatus
     reviewed_by: str | None
+    reviewed_at: datetime | None
+    posted_at: datetime | None
     tags: list[str]
 
 
@@ -82,3 +86,13 @@ class ReclassifyRequest(BaseModel):
 class GenerateReplyRequest(BaseModel):
     lead_id: UUID
     tone: str = "empathetic"
+
+
+class UpdateLeadScoreRequest(BaseModel):
+    score: int = Field(ge=1, le=5)
+    reviewer: str
+
+
+class UpdateLeadStatusRequest(BaseModel):
+    response_status: ResponseStatus
+    reviewed_by: str | None = None

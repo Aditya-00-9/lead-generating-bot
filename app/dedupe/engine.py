@@ -19,9 +19,10 @@ class DedupeDecision:
 
 
 class DedupeEngine:
-    def __init__(self, similarity_threshold: int, window_days: int) -> None:
+    def __init__(self, similarity_threshold: int, window_days: int, candidate_window: int = 200) -> None:
         self.similarity_threshold = similarity_threshold
         self.window_days = window_days
+        self.candidate_window = candidate_window
 
     def compute_hash(self, mention: NormalizedMention) -> str:
         normalized = " ".join(mention.cleaned_text.lower().split())
@@ -36,8 +37,10 @@ class DedupeEngine:
         duplicate_hash = self.compute_hash(mention)
         window_start = datetime.now(timezone.utc) - timedelta(days=self.window_days)
 
-        # URL-level dedupe.
-        exact = await session.scalar(select(Lead.id).where(Lead.source_url == mention.source_url).limit(1))
+        canonical_url = self._canonicalize_url(mention.source_url)
+        exact = await session.scalar(
+            select(Lead.id).where(Lead.source_url.in_([mention.source_url, canonical_url])).limit(1)
+        )
         if exact:
             return DedupeDecision(True, duplicate_hash, "url_match")
 
@@ -49,7 +52,9 @@ class DedupeEngine:
             return DedupeDecision(True, duplicate_hash, "hash_match")
 
         # Fuzzy dedupe against recent content only.
-        recent = await session.execute(select(Lead.cleaned_text).where(Lead.created_at >= window_start).limit(500))
+        recent = await session.execute(
+            select(Lead.cleaned_text).where(Lead.created_at >= window_start).limit(self.candidate_window)
+        )
         new_text = mention.cleaned_text[:1000]
         for (existing_text,) in recent:
             if ratio(new_text, (existing_text or "")[:1000]) >= self.similarity_threshold:

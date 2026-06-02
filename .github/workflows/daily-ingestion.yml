@@ -1,3 +1,4 @@
+# Daily at 14:00 UTC = 19:30 IST (7:30 PM India). Re-push this file if schedule shows 0 runs.
 name: Daily lead ingestion
 
 on:

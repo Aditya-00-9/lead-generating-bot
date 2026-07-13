@@ -20,29 +20,42 @@ if (-not (Test-Path $envFile)) {
     exit 1
 }
 
-$keys = @(
-    "DATABASE_URL",
-    "SYNC_DATABASE_URL",
-    "OPENAI_API_KEY",
-    "KEYWORDS",
-    "OPENAI_MODEL",
-    "OPENAI_TRIAGE_MODEL",
-    "SLACK_WEBHOOK_URL",
-    "SLACK_BOT_TOKEN",
-    "SLACK_CHANNEL_ID",
-    "GOOGLE_ALERT_RSS_URLS",
-    "REDDIT_CLIENT_ID",
-    "REDDIT_CLIENT_SECRET"
-)
+# Prefer Python sync to avoid PowerShell pipe/CRLF corrupting connection strings.
+$Python = Join-Path $Root ".venv\Scripts\python.exe"
+if (-not (Test-Path $Python)) { $Python = "python" }
 
-foreach ($key in $keys) {
-    $line = Get-Content $envFile | Where-Object { $_ -match "^\s*$key\s*=" } | Select-Object -First 1
-    if (-not $line) { continue }
-    $value = ($line -split "=", 2)[1].Trim().Trim('"')
-    if ([string]::IsNullOrWhiteSpace($value)) { continue }
-    Write-Host "Setting secret $key ..."
-    $value | gh secret set $key
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
+& $Python -c @"
+import subprocess
+from pathlib import Path
 
-Write-Host "Done. Trigger a run: gh workflow run daily-ingestion.yml"
+def load_env(path):
+    out = {}
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith('#') or '=' not in raw:
+            continue
+        k, v = raw.split('=', 1)
+        out[k.strip()] = v.strip().strip('\"').strip(\"'\")
+    return out
+
+env = load_env('.env')
+keys = [
+    'DATABASE_URL', 'SYNC_DATABASE_URL', 'OPENAI_API_KEY', 'KEYWORDS',
+    'OPENAI_MODEL', 'OPENAI_TRIAGE_MODEL', 'SLACK_WEBHOOK_URL',
+    'SLACK_BOT_TOKEN', 'SLACK_CHANNEL_ID', 'GOOGLE_ALERT_RSS_URLS',
+    'REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET',
+]
+for key in keys:
+    value = env.get(key, '').strip()
+    if not value or value.startswith('your_') or 'xxx' in value.lower() or 'zzz' in value.lower():
+        print(f'skip {key}')
+        continue
+    r = subprocess.run(['gh', 'secret', 'set', key, '--body', value], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f'FAIL {key}: {r.stderr.strip()}')
+        raise SystemExit(1)
+    print(f'Setting secret {key} ...')
+print('Done. Trigger a run: gh workflow run \"Daily lead ingestion\"')
+"@
+
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

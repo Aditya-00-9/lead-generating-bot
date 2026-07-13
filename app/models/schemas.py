@@ -15,6 +15,12 @@ class NormalizedMention(BaseModel):
     title: str = ""
     raw_text: str
     cleaned_text: str
+    competitor_mentioned: str | None = None
+    pain_category: str | None = None
+    suggested_hook: str | None = None
+    recency_signal: str | None = None
+    collection_relevance_score: float | None = None
+    source_published_at: datetime | None = None
 
 
 class ExtractedWebMention(BaseModel):
@@ -24,6 +30,12 @@ class ExtractedWebMention(BaseModel):
     source_url: str
     excerpt: str = ""
     relevance_score: float = Field(default=0.0, ge=0.0, le=100.0)
+    platform: str = "other"
+    competitor_mentioned: str = ""
+    pain_category: str = "other"
+    author_handle: str | None = None
+    suggested_hook: str = ""
+    recency_signal: str = "unknown"
 
 
 class ExtractedWebMentionsBatch(BaseModel):
@@ -54,6 +66,11 @@ class LeadResponse(BaseModel):
     author: str | None
     platform: str
     competitor: str
+    competitor_mentioned: str | None = None
+    pain_category: str | None = None
+    suggested_hook: str | None = None
+    recency_signal: str | None = None
+    source_published_at: datetime | None = None
     detected_pain_points: list[str]
     intent_score: float
     intent_label: IntentLabel

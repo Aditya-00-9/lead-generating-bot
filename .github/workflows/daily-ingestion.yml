@@ -60,11 +60,22 @@ jobs:
           SYNC_DATABASE_URL: ${{ secrets.SYNC_DATABASE_URL }}
           KEYWORDS: ${{ secrets.KEYWORDS }}
           MIN_ENRICH_SCORE: "50"
-          MAX_ITEMS_PER_QUERY: "10"
+          MAX_ITEMS_PER_QUERY: "25"
+          OPENAI_WEB_RESEARCH_MULTI_QUERY: "true"
+          OPENAI_WEB_RESEARCH_MAX_SEARCHES: "18"
+          OPENAI_WEB_RESEARCH_SEARCH_CONCURRENCY: "3"
+          OPENAI_WEB_RESEARCH_COMPETITORS_PER_RUN: "4"
+          OPENAI_WEB_RESEARCH_DISCOVERY_POOL_SIZE: "80"
+          OPENAI_WEB_RESEARCH_MAX_TOOL_CALLS_PER_SEARCH: "4"
+          OPENAI_WEB_RESEARCH_DEEP_EXTRACT: "true"
+          OPENAI_WEB_RESEARCH_DEEP_EXTRACT_LIMIT: "12"
+          OPENAI_WEB_RESEARCH_DEEP_EXTRACT_CONCURRENCY: "5"
+          OPENAI_COLLECTION_MIN_RELEVANCE: "45"
           GOOGLE_ALERT_RSS_URLS: ${{ secrets.GOOGLE_ALERT_RSS_URLS }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: kramaai-lead-monitor/1.0
+          REDDIT_SUBREDDITS: smallbusiness,fitnessbusiness,martialarts,gymowners,yoga,pilates,crossfit,SaaS
         run: |
           set -euo pipefail
           export SYNC_DATABASE_URL="${SYNC_DATABASE_URL:-$DATABASE_URL}"

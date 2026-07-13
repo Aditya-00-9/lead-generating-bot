@@ -35,15 +35,34 @@ class Settings(BaseSettings):
     openai_triage_model: str = ""
     openai_timeout_seconds: int = 25
     min_enrich_score: float = 50.0
+    gate1_fail_min_relevance: float = 60.0
+    digest_min_rank_score: float = 0.0
+    triage_min_collection_relevance: float = 45.0
+    quality_feedback_min_avg_score: float = 4.0
+    quality_feedback_min_samples: int = 2
     reply_context: str = ""
     # OpenAI web discovery: on by default; set ENABLE_OPENAI_WEB_RESEARCH=false to disable (saves API cost).
     enable_openai_web_research: bool = True
     openai_responses_model: str = ""
-    openai_web_research_max_tool_calls: int = 5
+    # Phase 1: multi-query web discovery (set false to restore single-shot search).
+    openai_web_research_multi_query: bool = True
+    openai_web_research_max_searches: int = 18
+    openai_web_research_search_concurrency: int = 3
+    openai_web_research_competitors_per_run: int = 4
+    openai_web_research_discovery_pool_size: int = 80
+    openai_web_research_max_tool_calls: int = 12
+    openai_web_research_max_tool_calls_per_search: int = 4
+    openai_web_research_seen_url_limit: int = 200
     openai_collection_timeout_seconds: int = 120
     openai_scraper_urls: str = ""
     openai_collection_model: str = ""
     openai_collection_min_relevance: float = 35.0
+    # Phase 3: fetch top discovery URLs in parallel for richer excerpts.
+    openai_web_research_deep_extract: bool = True
+    openai_web_research_deep_extract_limit: int = 8
+    openai_web_research_deep_extract_concurrency: int = 5
+    openai_url_scrape_concurrency: int = 5
+    lead_backfill_on_ingestion: bool = True
 
     slack_webhook_url: str = ""
     slack_channel: str = "#kramaai-market-listening"

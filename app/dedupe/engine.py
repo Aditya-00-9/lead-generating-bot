@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from urllib.parse import urlparse
 
-from rapidfuzz.fuzz import ratio
+from app.prompts.collection_signals import is_near_duplicate_text
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,23 @@ class DedupeEngine:
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
+    def _mention_competitor_key(self, mention: NormalizedMention) -> str:
+        return (mention.competitor_mentioned or "").lower()
+
+    def is_near_duplicate_in_batch(self, mention: NormalizedMention, batch: list[NormalizedMention]) -> bool:
+        new_text = mention.cleaned_text
+        new_comp = self._mention_competitor_key(mention)
+        for existing in batch:
+            if is_near_duplicate_text(
+                new_text,
+                existing.cleaned_text,
+                threshold=self.similarity_threshold,
+                competitor_a=new_comp or None,
+                competitor_b=self._mention_competitor_key(existing) or None,
+            ):
+                return True
+        return False
+
     async def check(self, session: AsyncSession, mention: NormalizedMention) -> DedupeDecision:
         duplicate_hash = self.compute_hash(mention)
         window_start = datetime.now(timezone.utc) - timedelta(days=self.window_days)
@@ -51,13 +68,25 @@ class DedupeEngine:
         if hash_match:
             return DedupeDecision(True, duplicate_hash, "hash_match")
 
-        # Fuzzy dedupe against recent content only.
+        # Fuzzy dedupe against recent content (same competitor when known).
+        mention_comp = self._mention_competitor_key(mention)
         recent = await session.execute(
-            select(Lead.cleaned_text).where(Lead.created_at >= window_start).limit(self.candidate_window)
+            select(Lead.cleaned_text, Lead.competitor, Lead.competitor_mentioned).where(
+                Lead.created_at >= window_start
+            ).limit(self.candidate_window)
         )
-        new_text = mention.cleaned_text[:1000]
-        for (existing_text,) in recent:
-            if ratio(new_text, (existing_text or "")[:1000]) >= self.similarity_threshold:
+        new_text = mention.cleaned_text
+        for existing_text, competitor, competitor_mentioned in recent:
+            lead_comp = (competitor_mentioned or competitor or "").lower()
+            if mention_comp and lead_comp and mention_comp != lead_comp:
+                continue
+            if is_near_duplicate_text(
+                new_text,
+                existing_text or "",
+                threshold=self.similarity_threshold,
+                competitor_a=mention_comp or None,
+                competitor_b=lead_comp or None,
+            ):
                 return DedupeDecision(True, duplicate_hash, "fuzzy_match")
 
         return DedupeDecision(False, duplicate_hash, "unique")

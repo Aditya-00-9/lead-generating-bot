@@ -62,6 +62,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Running daily ingestion (OpenAI calls — may take several minutes)..."
 & $Python -m app.scheduler.runner
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $reports = Join-Path $Root "reports"
 if (Test-Path $reports) {
@@ -69,6 +70,39 @@ if (Test-Path $reports) {
     Write-Host "Excel reports:"
     Get-ChildItem $reports -Filter "*.xlsx" | ForEach-Object { Write-Host "  $($_.FullName)" }
 }
+
 Write-Host ""
-Write-Host "API (optional):  .\.venv\Scripts\uvicorn app.main:app --reload --port 8000"
-Write-Host "  Browse leads: http://localhost:8000/docs"
+Write-Host "Starting API on http://localhost:8000 ..."
+$existing = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
+if ($existing) {
+    $existing | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 1
+}
+$apiProc = Start-Process -FilePath $Python -ArgumentList "scripts/run_api.py" -WorkingDirectory $Root -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 4
+
+$healthOk = $false
+$readyOk = $false
+try {
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 10
+    $healthOk = $health.status -eq "ok"
+} catch { }
+
+try {
+    $ready = Invoke-RestMethod -Uri "http://127.0.0.1:8000/ready" -TimeoutSec 15
+    $readyOk = $ready.status -eq "ready"
+} catch { }
+
+if ($healthOk -and $readyOk) {
+    Write-Host "API is running (PID $($apiProc.Id))"
+    Write-Host "  Docs:   http://localhost:8000/docs"
+    Write-Host "  Stats:  http://localhost:8000/api/stats"
+    try {
+        $stats = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/stats" -TimeoutSec 15
+        Write-Host "  Leads in DB: $($stats.total_leads)"
+    } catch { }
+} else {
+    Write-Host "API failed to start. Try manually:  .\.venv\Scripts\python.exe scripts\run_api.py"
+    if (-not $apiProc.HasExited) { Stop-Process -Id $apiProc.Id -Force -ErrorAction SilentlyContinue }
+    exit 1
+}

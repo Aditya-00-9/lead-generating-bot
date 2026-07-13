@@ -10,5 +10,10 @@ class BaseCollector(ABC):
     platform: str
 
     @abstractmethod
-    async def collect(self, keywords: list[str], limit: int) -> list[NormalizedMention]:
+    async def collect(
+        self,
+        keywords: list[str],
+        limit: int,
+        exclude_urls: list[str] | None = None,
+    ) -> list[NormalizedMention]:
         raise NotImplementedError

@@ -10,5 +10,10 @@ class PlaceholderCollector(BaseCollector):
         self.platform = platform
         self.source_name = source_name
 
-    async def collect(self, keywords: list[str], limit: int) -> list[NormalizedMention]:
+    async def collect(
+        self,
+        keywords: list[str],
+        limit: int,
+        exclude_urls: list[str] | None = None,
+    ) -> list[NormalizedMention]:
         return []

@@ -1,10 +1,14 @@
 from datetime import datetime, timezone
 
+from app.utils.recency import recency_factor, resolve_reference_date
+
 SOURCE_WEIGHTS = {
     "g2": 1.5,
     "capterra": 1.4,
     "linkedin": 1.3,
     "reddit": 1.2,
+    "trustpilot": 1.15,
+    "hackernews": 1.1,
     "twitter": 0.8,
     "blog": 0.6,
 }
@@ -26,11 +30,19 @@ class LeadRanker:
         source_quality: float,
         source: str,
         competitor: str,
-        created_at: datetime,
+        ingested_at: datetime,
+        platform: str | None = None,
+        recency_signal: str | None = None,
+        source_published_at: datetime | None = None,
     ) -> float:
-        age_days = (datetime.now(timezone.utc) - created_at).days
-        recency = 1 / (1 + 0.1 * age_days)
-        source_key = source.lower()
+        reference = resolve_reference_date(
+            source_published_at=source_published_at,
+            recency_signal=recency_signal,
+            ingested_at=ingested_at,
+        )
+        age_days = (datetime.now(timezone.utc) - reference).days
+        recency = recency_factor(age_days, recency_signal)
+        source_key = f"{platform or ''} {source}".lower()
         source_w = 1.0
         for key, weight in SOURCE_WEIGHTS.items():
             if key in source_key:

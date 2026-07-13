@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -8,6 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lead import Lead, ResponseStatus
 from app.models.schemas import AIEnrichmentResult, NormalizedMention
+
+
+def _resolve_competitor(mention: NormalizedMention, enrichment: AIEnrichmentResult) -> str:
+    if enrichment.competitor and enrichment.competitor != "Unknown":
+        return enrichment.competitor
+    if mention.competitor_mentioned:
+        return mention.competitor_mentioned
+    return enrichment.competitor or "Unknown"
+
+
+def _resolve_suggested_reply(mention: NormalizedMention, enrichment: AIEnrichmentResult) -> str:
+    reply = (enrichment.suggested_reply or "").strip()
+    if reply:
+        return reply
+    return (mention.suggested_hook or "").strip()
 
 
 class LeadRepository:
@@ -29,13 +45,18 @@ class LeadRepository:
             platform=mention.platform,
             raw_text=mention.raw_text,
             cleaned_text=mention.cleaned_text,
-            competitor=enrichment.competitor,
+            competitor=_resolve_competitor(mention, enrichment),
+            competitor_mentioned=mention.competitor_mentioned,
+            pain_category=mention.pain_category,
+            suggested_hook=mention.suggested_hook,
+            recency_signal=mention.recency_signal,
+            source_published_at=mention.source_published_at,
             detected_pain_points=enrichment.detected_pain_points,
             intent_score=enrichment.intent_score,
             intent_label=enrichment.intent_label,
             worth_responding=enrichment.worth_responding,
             ai_summary=enrichment.ai_summary,
-            suggested_reply=enrichment.suggested_reply,
+            suggested_reply=_resolve_suggested_reply(mention, enrichment),
             sentiment=enrichment.sentiment,
             urgency_score=enrichment.urgency_score,
             engagement_score=enrichment.engagement_score,
@@ -66,9 +87,17 @@ class LeadRepository:
         return row
 
     async def list(
-        self, page: int, page_size: int, competitor: str | None = None, intent_label: str | None = None
+        self,
+        page: int,
+        page_size: int,
+        competitor: str | None = None,
+        intent_label: str | None = None,
+        sort: Literal["rank_score", "created_at"] = "rank_score",
     ) -> tuple[int, list[Lead]]:
-        query = select(Lead).order_by(Lead.created_at.desc())
+        if sort == "created_at":
+            query = select(Lead).order_by(Lead.created_at.desc())
+        else:
+            query = select(Lead).order_by(Lead.rank_score.desc(), Lead.created_at.desc())
         count_query = select(func.count(Lead.id))
         if competitor:
             query = query.where(Lead.competitor == competitor)
@@ -83,6 +112,13 @@ class LeadRepository:
     async def list_all_for_export(self) -> list[Lead]:
         rows = await self.session.scalars(select(Lead).order_by(Lead.created_at.desc()))
         return list(rows.all())
+
+    async def list_recent_source_urls(self, limit: int = 200) -> list[str]:
+        """Newest source URLs for anti-rediscovery hints during collection."""
+        rows = await self.session.scalars(
+            select(Lead.source_url).order_by(Lead.created_at.desc()).limit(max(1, limit))
+        )
+        return [u for u in rows.all() if u]
 
     async def stats(self) -> dict:
         total = int((await self.session.scalar(select(func.count(Lead.id)))) or 0)

@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+from typing import Literal
+
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.classifiers.openai_enricher import OpenAIEnricher
 from app.config.settings import get_settings
 from app.db.session import get_db_session
+from app.observability.collector_health import all_collector_health, get_last_run_snapshot
 from app.models.schemas import (
     GenerateReplyRequest,
     LeadResponse,
@@ -16,6 +20,7 @@ from app.models.schemas import (
     UpdateLeadStatusRequest,
 )
 from app.ranking.lead_ranker import LeadRanker
+from app.services.quality_feedback import aggregate_high_quality_combos, build_quality_feedback_report
 from app.storage.lead_repository import LeadRepository
 
 router = APIRouter(prefix="/api")
@@ -27,10 +32,13 @@ async def get_leads(
     page_size: int = Query(default=20, ge=1, le=100),
     competitor: str | None = None,
     intent_label: str | None = None,
+    sort: Literal["rank_score", "created_at"] = Query(default="rank_score"),
     session: AsyncSession = Depends(get_db_session),
 ) -> LeadsListResponse:
     repo = LeadRepository(session)
-    total, items = await repo.list(page=page, page_size=page_size, competitor=competitor, intent_label=intent_label)
+    total, items = await repo.list(
+        page=page, page_size=page_size, competitor=competitor, intent_label=intent_label, sort=sort
+    )
     return LeadsListResponse(total=total, page=page, page_size=page_size, items=[LeadResponse.model_validate(i) for i in items])
 
 
@@ -50,7 +58,30 @@ async def get_quality_stats(session: AsyncSession = Depends(get_db_session)) -> 
 
 @router.get("/stats")
 async def get_stats(session: AsyncSession = Depends(get_db_session)) -> dict:
-    return await LeadRepository(session).stats()
+    base = await LeadRepository(session).stats()
+    base["last_run"] = get_last_run_snapshot()
+    base["collectors"] = [asdict(row) for row in all_collector_health()]
+    return base
+
+
+@router.get("/stats/last-run")
+async def get_last_run_stats() -> dict:
+    return get_last_run_snapshot()
+
+
+@router.get("/stats/quality-combos")
+async def get_quality_combos(
+    min_avg_score: float = Query(default=4.0, ge=1.0, le=5.0),
+    min_samples: int = Query(default=2, ge=1),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    settings = get_settings()
+    combos = await aggregate_high_quality_combos(
+        session,
+        min_avg_score=min_avg_score or settings.quality_feedback_min_avg_score,
+        min_samples=min_samples or settings.quality_feedback_min_samples,
+    )
+    return build_quality_feedback_report(combos)
 
 
 @router.patch("/leads/{lead_id}/score", response_model=LeadResponse)
@@ -80,6 +111,11 @@ async def reclassify(payload: ReclassifyRequest, session: AsyncSession = Depends
         title="",
         raw_text=lead.raw_text,
         cleaned_text=lead.cleaned_text,
+        competitor_mentioned=lead.competitor_mentioned,
+        pain_category=lead.pain_category,
+        suggested_hook=lead.suggested_hook,
+        recency_signal=lead.recency_signal,
+        source_published_at=lead.source_published_at,
     )
     enriched = await OpenAIEnricher(get_settings()).enrich(mention)
     lead.competitor = enriched.competitor
@@ -100,7 +136,10 @@ async def reclassify(payload: ReclassifyRequest, session: AsyncSession = Depends
         source_quality=enriched.engagement_score,
         source=lead.source,
         competitor=enriched.competitor,
-        created_at=lead.created_at or datetime.now(timezone.utc),
+        ingested_at=lead.created_at or datetime.now(timezone.utc),
+        platform=lead.platform,
+        recency_signal=lead.recency_signal,
+        source_published_at=lead.source_published_at,
     )
     await session.commit()
     return {"status": "ok"}

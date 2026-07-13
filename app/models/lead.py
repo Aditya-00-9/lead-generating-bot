@@ -43,6 +43,11 @@ class Lead(Base):
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     cleaned_text: Mapped[str] = mapped_column(Text, nullable=False)
     competitor: Mapped[str] = mapped_column(String(64), nullable=False)
+    competitor_mentioned: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pain_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    suggested_hook: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recency_signal: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     detected_pain_points: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
 
     intent_score: Mapped[float] = mapped_column(Float, nullable=False)

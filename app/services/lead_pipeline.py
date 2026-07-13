@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -16,46 +16,58 @@ from app.dedupe.engine import DedupeEngine, DedupeDecision
 from app.models.lead import IntentLabel, Lead
 from app.models.schemas import AIEnrichmentResult, NormalizedMention
 from app.ranking.lead_ranker import LeadRanker
+from app.prompts.collection_signals import (
+    blend_source_quality,
+    passes_competitor_context,
+    text_has_pain_signal,
+)
+from app.observability.collector_health import all_collector_health, record_collector_run, set_last_run_snapshot
+from app.observability.cost_estimate import estimate_run_cost
 from app.services.collector_factory import build_collectors
+from app.services.lead_backfill import backfill_platform_and_ranks
+from app.services.quality_feedback import aggregate_high_quality_combos, export_quality_feedback_report
 from app.services.report_exporter import ReportExporter
-from app.slack.digest import RunTelemetry, send_slack_digest, upload_report_to_slack
+from app.slack.digest import RunTelemetry, filter_digest_leads, send_slack_digest, upload_report_to_slack
 from app.storage.lead_repository import LeadRepository
 from app.storage.report_repository import ReportRepository
 
 logger = structlog.get_logger(__name__)
 
-_PAIN_SIGNALS = [
-    "cancel",
-    "canceling",
-    "cancellation",
-    "switching",
-    "switch to",
-    "hate",
-    "broken",
-    "bug",
-    "glitch",
-    "expensive",
-    "overpriced",
-    "support is",
-    "terrible",
-    "nightmare",
-    "looking for alternative",
-    "moved away",
-    "thinking of switching",
-    "considering leaving",
-]
-
 _TRIAGE_SEM = asyncio.Semaphore(int(os.getenv("TRIAGE_CONCURRENCY", "10")))
 _ENRICH_SEM = asyncio.Semaphore(int(os.getenv("ENRICHMENT_CONCURRENCY", "5")))
 
 
-def _has_pain_signal(text: str) -> bool:
-    t = text.lower()
-    return any(k in t for k in _PAIN_SIGNALS)
-
-
 def _content_hash(source_url: str, text: str) -> str:
     return hashlib.sha256(f"{source_url.strip()}::{text.strip().lower()}".encode()).hexdigest()
+
+
+def should_persist_gate1_fail(mention: NormalizedMention, min_relevance: float) -> bool:
+    """Gate1-fail items lack pain keywords; only persist when collection relevance is high."""
+    score = mention.collection_relevance_score
+    if score is None:
+        return False
+    return score >= min_relevance
+
+
+def should_full_enrich(mention: NormalizedMention) -> bool:
+    """Expensive enrichment only for pain-signal mentions that are not stale."""
+    if not text_has_pain_signal(mention.cleaned_text):
+        return False
+    signal = (mention.recency_signal or "").strip().lower()
+    return signal != "older"
+
+
+def _collector_usage_stats(collectors: list) -> tuple[int, int, int]:
+    web_searches = 0
+    deep_extracts = 0
+    extract_chars = 0
+    for collector in collectors:
+        web_searches += int(getattr(collector, "last_run_web_searches", 0) or 0)
+        deep_extracts += int(getattr(collector, "last_run_deep_extracts", 0) or 0)
+        extractor = getattr(collector, "_page_extractor", None) or getattr(collector, "_extractor", None)
+        if extractor is not None:
+            extract_chars += int(getattr(extractor, "last_extract_input_chars", 0) or 0)
+    return web_searches, deep_extracts, extract_chars
 
 
 def _intent_from_score(score: float) -> IntentLabel:
@@ -67,14 +79,16 @@ def _intent_from_score(score: float) -> IntentLabel:
 
 
 def _low_enrichment(mention: NormalizedMention) -> AIEnrichmentResult:
+    competitor = mention.competitor_mentioned or "Unknown"
+    pain = [mention.pain_category] if mention.pain_category and mention.pain_category != "other" else []
     return AIEnrichmentResult(
-        competitor="Unknown",
-        detected_pain_points=[],
+        competitor=competitor,
+        detected_pain_points=pain,
         intent_score=0.0,
         intent_label=IntentLabel.low,
         worth_responding=False,
         ai_summary=mention.cleaned_text[:320],
-        suggested_reply="",
+        suggested_reply=(mention.suggested_hook or "")[:420],
         sentiment="neutral",
         urgency_score=0.0,
         engagement_score=0.0,
@@ -141,17 +155,30 @@ class LeadPipelineService:
         enrichment: AIEnrichmentResult,
         mention: NormalizedMention,
         source_quality: float,
-        created_at: datetime,
+        ingested_at: datetime,
     ) -> float:
+        blended_quality = blend_source_quality(source_quality, mention.collection_relevance_score)
         return self.ranker.score(
             intent=enrichment.intent_score,
             urgency=enrichment.urgency_score,
             engagement=enrichment.engagement_score,
-            source_quality=source_quality,
+            source_quality=blended_quality,
             source=mention.source,
             competitor=enrichment.competitor,
-            created_at=created_at,
+            ingested_at=ingested_at,
+            platform=mention.platform,
+            recency_signal=mention.recency_signal,
+            source_published_at=mention.source_published_at,
         )
+
+    def _triage_min_relevance(self) -> float:
+        return self.settings.triage_min_collection_relevance
+
+    def _should_triage(self, mention: NormalizedMention) -> bool:
+        rel = mention.collection_relevance_score
+        if rel is None:
+            return True
+        return rel >= self._triage_min_relevance()
 
     async def _persist(
         self,
@@ -197,7 +224,8 @@ class LeadPipelineService:
     ) -> Lead | None:
         enrichment = _low_enrichment(item.mention)
         now = datetime.now(timezone.utc)
-        rank_score = self._compute_rank(enrichment, item.mention, 0.0, now)
+        sq = blend_source_quality(0.0, item.mention.collection_relevance_score)
+        rank_score = self._compute_rank(enrichment, item.mention, sq, now)
         lead = await self._persist(repo, item.mention, enrichment, item.dedupe, item.content_hash, rank_score)
         if lead:
             telemetry.new_leads += 1
@@ -230,11 +258,36 @@ class LeadPipelineService:
         report_exporter = ReportExporter(self.settings.report_output_dir)
         telemetry = RunTelemetry()
 
-        tasks = [
-            collector.collect(self.settings.keyword_list, self.settings.max_items_per_query)
-            for collector in self.collectors
-        ]
-        collected_batches = await asyncio.gather(*tasks, return_exceptions=True)
+        if self.settings.lead_backfill_on_ingestion:
+            telemetry.backfilled = await backfill_platform_and_ranks(self.session, self.ranker)
+
+        seen_urls = await repo.list_recent_source_urls(self.settings.openai_web_research_seen_url_limit)
+
+        async def run_collector(collector) -> list[NormalizedMention] | Exception:
+            started_collector = time.monotonic()
+            try:
+                if hasattr(collector, "reset_run_stats"):
+                    collector.reset_run_stats()
+                result = await collector.collect(
+                    self.settings.keyword_list,
+                    self.settings.max_items_per_query,
+                    exclude_urls=seen_urls,
+                )
+                record_collector_run(
+                    collector.name,
+                    item_count=len(result),
+                    duration_s=time.monotonic() - started_collector,
+                )
+                return result
+            except Exception as exc:
+                record_collector_run(
+                    collector.name,
+                    error=str(exc),
+                    duration_s=time.monotonic() - started_collector,
+                )
+                return exc
+
+        collected_batches = await asyncio.gather(*[run_collector(c) for c in self.collectors])
 
         mentions: list[NormalizedMention] = []
         for collector, result in zip(self.collectors, collected_batches):
@@ -244,7 +297,29 @@ class LeadPipelineService:
             logger.info("collector.success", collector=collector.name, count=len(result))
             mentions.extend(result)
 
+        context_filtered = 0
+        filtered_mentions: list[NormalizedMention] = []
+        for mention in mentions:
+            if passes_competitor_context(
+                mention.cleaned_text, self.settings.competitors, mention.competitor_mentioned
+            ):
+                filtered_mentions.append(mention)
+            else:
+                context_filtered += 1
+        mentions = filtered_mentions
+
+        batch_unique: list[NormalizedMention] = []
+        in_batch_deduped = 0
+        for mention in mentions:
+            if self.dedupe.is_near_duplicate_in_batch(mention, batch_unique):
+                in_batch_deduped += 1
+                continue
+            batch_unique.append(mention)
+        mentions = batch_unique
+
         telemetry.collected = len(mentions)
+        telemetry.context_filtered = context_filtered
+        telemetry.deduped += in_batch_deduped
         seen_urls: set[str] = set()
         work: list[_WorkItem] = []
         for mention in mentions:
@@ -279,32 +354,66 @@ class LeadPipelineService:
                 if lead:
                     created.append(lead)
                 continue
-            if _has_pain_signal(item.mention.cleaned_text):
+            if text_has_pain_signal(item.mention.cleaned_text):
                 gate1_pass.append(item)
                 telemetry.gate1_passed += 1
             else:
                 gate1_fail.append(item)
 
         for item in gate1_fail:
+            if not should_persist_gate1_fail(item.mention, self.settings.gate1_fail_min_relevance):
+                telemetry.gate1_fail_dropped += 1
+                continue
             lead = await self._process_gate1_fail(repo, item, telemetry)
             if lead:
                 created.append(lead)
+                telemetry.gate1_fail_persisted += 1
+
+        triage_eligible: list[_WorkItem] = []
+        for item in gate1_pass:
+            if not self._should_triage(item.mention):
+                telemetry.triage_skipped_low_relevance += 1
+                enrichment = _low_enrichment(item.mention)
+                now = datetime.now(timezone.utc)
+                sq = blend_source_quality(0.0, item.mention.collection_relevance_score)
+                rank_score = self._compute_rank(enrichment, item.mention, sq, now)
+                lead = await self._persist(
+                    repo, item.mention, enrichment, item.dedupe, item.content_hash, rank_score
+                )
+                if lead:
+                    created.append(lead)
+                    telemetry.new_leads += 1
+                continue
+            triage_eligible.append(item)
 
         triage_results: list[dict] = []
-        if gate1_pass:
-            triage_results = await self._triage_chunks(gate1_pass)
+        if triage_eligible:
+            triage_results = await self._triage_chunks(triage_eligible)
 
         gate3_items: list[tuple[_WorkItem, dict, float]] = []
-        for item, triage in zip(gate1_pass, triage_results):
+        for item, triage in zip(triage_eligible, triage_results):
+            source_quality = blend_source_quality(
+                float(triage["source_quality"]), item.mention.collection_relevance_score
+            )
             if float(triage["intent_score"]) >= self.settings.min_enrich_score:
                 telemetry.gate2_passed += 1
-                gate3_items.append((item, triage, float(triage["source_quality"])))
+                if should_full_enrich(item.mention):
+                    gate3_items.append((item, triage, source_quality))
+                else:
+                    telemetry.enrich_skipped_stale += 1
+                    enrichment = _enrichment_from_triage(triage, item.mention, self.settings.min_enrich_score)
+                    now = datetime.now(timezone.utc)
+                    rank_score = self._compute_rank(enrichment, item.mention, source_quality, now)
+                    lead = await self._persist(
+                        repo, item.mention, enrichment, item.dedupe, item.content_hash, rank_score
+                    )
+                    if lead:
+                        created.append(lead)
+                        telemetry.new_leads += 1
             else:
                 enrichment = _enrichment_from_triage(triage, item.mention, self.settings.min_enrich_score)
                 now = datetime.now(timezone.utc)
-                rank_score = self._compute_rank(
-                    enrichment, item.mention, float(triage["source_quality"]), now
-                )
+                rank_score = self._compute_rank(enrichment, item.mention, source_quality, now)
                 lead = await self._persist(
                     repo, item.mention, enrichment, item.dedupe, item.content_hash, rank_score
                 )
@@ -347,23 +456,55 @@ class LeadPipelineService:
         telemetry.api_calls = self.enricher.api_call_count
         telemetry.runtime_s = round(time.monotonic() - started, 1)
 
+        web_searches, deep_extracts, extract_chars = _collector_usage_stats(self.collectors)
+        cost = estimate_run_cost(
+            web_searches=web_searches,
+            deep_extract_calls=deep_extracts,
+            chat_api_calls=self.enricher.api_call_count,
+            triage_chars=self.enricher.est_triage_chars,
+            enrich_chars=self.enricher.est_enrich_chars,
+            extract_chars=extract_chars,
+            responses_model=(self.settings.openai_responses_model or self.settings.openai_model).strip(),
+            chat_model=self.settings.openai_triage_model_name,
+            extract_model=(self.settings.openai_collection_model or self.settings.openai_model).strip(),
+        )
+        telemetry.est_cost_usd = cost.est_cost_usd
+        telemetry.web_searches = cost.web_searches
+        collector_rows = all_collector_health()
+        set_last_run_snapshot(
+            telemetry=asdict(telemetry),
+            collectors=collector_rows,
+            cost=cost.to_dict(),
+        )
+
         report_date = datetime.now(ZoneInfo(self.settings.scheduler_timezone)).date()
         new_leads_report_path = report_exporter.export_new_leads_excel(created, report_date)
         all_leads = await repo.list_all_for_export()
         all_leads_report_path = report_exporter.export_all_leads_excel(all_leads, report_date)
         await report_repo.insert_from_leads(created, report_date)
 
+        quality_combos = await aggregate_high_quality_combos(
+            self.session,
+            min_avg_score=self.settings.quality_feedback_min_avg_score,
+            min_samples=self.settings.quality_feedback_min_samples,
+        )
+        if quality_combos:
+            export_quality_feedback_report(quality_combos, self.settings.report_output_dir, report_date=report_date)
+
         if self.settings.slack_webhook_url:
             try:
+                digest_leads = filter_digest_leads(created, self.settings.digest_min_rank_score)
                 await send_slack_digest(
                     self.settings.slack_webhook_url,
                     self.settings.slack_channel,
-                    created,
+                    digest_leads,
                     report_paths=[new_leads_report_path, all_leads_report_path],
                     telemetry=telemetry,
                     report_date=report_date,
+                    collector_health=[asdict(row) for row in collector_rows],
+                    cost=cost.to_dict(),
                 )
-                logger.info("slack.digest.sent", count=len(created))
+                logger.info("slack.digest.sent", count=len(digest_leads), total_created=len(created))
             except Exception as exc:  # noqa: BLE001
                 logger.exception("slack.digest.failed", error=str(exc))
         if self.settings.slack_bot_token and self.settings.slack_channel_id:
